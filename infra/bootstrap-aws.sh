@@ -5,7 +5,7 @@ set -Eeuo pipefail
 : "${EC2_INSTANCE_ID:?EC2_INSTANCE_ID environment variable is required}"
 
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
-GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-tech4good-One-T/aiserver}"
+GITHUB_OIDC_SUBJECT="${GITHUB_OIDC_SUBJECT:-repo:tech4good-One-T@305329624/aiserver@1301218374:ref:refs/heads/main}"
 DEPLOY_ROLE_NAME="${DEPLOY_ROLE_NAME:-aiserver1-github-deploy}"
 EC2_ROLE_NAME="${EC2_ROLE_NAME:-aiserver1-ec2-ssm}"
 INSTANCE_PROFILE_NAME="${INSTANCE_PROFILE_NAME:-aiserver1-ec2-ssm}"
@@ -43,7 +43,7 @@ cat >"${working_directory}/github-trust.json" <<EOF
       "Condition": {
         "StringEquals": {
           "${OIDC_HOST}:aud": "sts.amazonaws.com",
-          "${OIDC_HOST}:sub": "repo:${GITHUB_REPOSITORY}:ref:refs/heads/main"
+          "${OIDC_HOST}:sub": "${GITHUB_OIDC_SUBJECT}"
         }
       }
     }
