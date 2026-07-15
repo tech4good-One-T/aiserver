@@ -209,7 +209,7 @@ jobs:
             aws ssm send-command \
               --instance-ids "${EC2_INSTANCE_ID}" \
               --document-name AWS-RunShellScript \
-              --comment "Deploy ${IMAGE}" \
+              --comment "Deploy aiserver1 ${GITHUB_SHA}" \
               --parameters "${parameters}" \
               --query Command.CommandId \
               --output text \
