@@ -15,6 +15,7 @@
 | **Object Storage** | Presigned GET/PUT URL을 통한 원본 다운로드·결과 업로드 |
 
 - **로컬 서버:** `http://localhost:8000` · Swagger: [/docs](http://localhost:8000/docs) · OpenAPI: [/openapi.json](http://localhost:8000/openapi.json)
+- **시연 영상:** [Preveil 서비스 시연 영상 보기](https://www.youtube.com/watch?v=m9mBjyca8EE)
 - **API 명세:** [공통 규칙](.agents/docs/api/common.md) · [이미지 분석](.agents/docs/api/images-analyze.md) · [이미지 처리](.agents/docs/api/images-process.md) · [v2 후처리·프롬프트 편집](.agents/docs/api/images-v2-process-edit.md)
 - **설계·운영 문서:** [AI 아키텍처](.agents/docs/ai_architect.md) · [배포](.agents/docs/deployment.md)
 
@@ -42,41 +43,31 @@ AI 서버는 분석 상태나 이미지 파일을 영구 저장하지 않는다.
 
 ## AI 및 데이터 활용 방식
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="images/ai-usage.png">
-        <img src="images/ai-usage.png" width="100%" alt="Gemini, FaceShield, LangChain 활용 방식">
-      </a><br>
-      <sub><b>AI 활용 방식</b><br>위험 탐지, 딥페이크 선제 방어, 프롬프트 오케스트레이션</sub>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="images/data-usage.png">
-        <img src="images/data-usage.png" width="100%" alt="FaceShield 학습 및 평가 데이터 활용 방식">
-      </a><br>
-      <sub><b>데이터 활용 방식</b><br>FaceShield 구성 모델의 학습 데이터와 평가 흐름</sub>
-    </td>
-  </tr>
-</table>
+### AI 활용 방식
+
+위험 탐지, 딥페이크 선제 방어, 프롬프트 오케스트레이션에 AI를 활용합니다.
+
+[![Gemini, FaceShield, LangChain 활용 방식](images/ai-usage.png)](images/ai-usage.png)
+
+### 데이터 활용 방식
+
+FaceShield 구성 모델의 학습 데이터와 평가 흐름을 설명합니다.
+
+[![FaceShield 학습 및 평가 데이터 활용 방식](images/data-usage.png)](images/data-usage.png)
 
 ## 구현 결과 및 모델 선택
 
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <a href="images/implementation-results.png">
-        <img src="images/implementation-results.png" width="100%" alt="개인정보 보호 및 딥페이크 방어 구현 결과">
-      </a><br>
-      <sub><b>구현 결과</b><br>개인정보 마스킹과 얼굴 딥페이크 방어 적용 예시</sub>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <a href="images/model-selection-and-trends.png">
-        <img src="images/model-selection-and-trends.png" width="100%" alt="FaceShield 모델 선택 이유와 기술 동향">
-      </a><br>
-      <sub><b>모델 선택 이유</b><br>공격 범위, 전이성, 후처리 내성, 데이터 안전성 기준</sub>
-    </td>
-  </tr>
-</table>
+### 구현 결과
+
+개인정보 마스킹과 얼굴 딥페이크 방어 적용 결과입니다.
+
+[![개인정보 보호 및 딥페이크 방어 구현 결과](images/implementation-results.png)](images/implementation-results.png)
+
+### 모델 선택 이유와 기술 동향
+
+공격 범위, 전이성, 후처리 내성, 데이터 안전성을 기준으로 FaceShield를 선택했습니다.
+
+[![FaceShield 모델 선택 이유와 기술 동향](images/model-selection-and-trends.png)](images/model-selection-and-trends.png)
 
 > 각 이미지를 클릭하면 원본 크기로 확인할 수 있습니다.
 
