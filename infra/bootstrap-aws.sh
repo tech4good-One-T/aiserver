@@ -3,6 +3,7 @@
 set -Eeuo pipefail
 
 : "${EC2_INSTANCE_ID:?EC2_INSTANCE_ID environment variable is required}"
+: "${BACKEND_CIDR:?BACKEND_CIDR environment variable is required; restrict it to the backend/VPC CIDR}"
 
 AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 GITHUB_OIDC_SUBJECT="${GITHUB_OIDC_SUBJECT:-repo:tech4good-One-T@305329624/aiserver@1301218374:ref:refs/heads/main}"
@@ -200,7 +201,7 @@ if ! ingress_result="$(
     --region "${AWS_REGION}" \
     --group-id "${SECURITY_GROUP_ID}" \
     --ip-permissions \
-      "IpProtocol=tcp,FromPort=${APP_PORT},ToPort=${APP_PORT},IpRanges=[{CidrIp=0.0.0.0/0,Description=aiserver1}]" \
+      "IpProtocol=tcp,FromPort=${APP_PORT},ToPort=${APP_PORT},IpRanges=[{CidrIp=${BACKEND_CIDR},Description=aiserver1-backend}]" \
     --no-cli-pager 2>&1
 )"; then
   if [[ "${ingress_result}" != *"InvalidPermission.Duplicate"* ]]; then

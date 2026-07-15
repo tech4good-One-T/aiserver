@@ -35,6 +35,16 @@ def configure_logging() -> None:
                 "handlers": ["console"],
                 "level": log_level,
             },
+            # HTTP clients may include complete query strings in request logs.
+            # Presigned URLs are credentials, so transport logs stay suppressed
+            # even when application debugging is enabled.
+            "loggers": {
+                "httpx": {"level": "WARNING", "propagate": True},
+                "httpcore": {"level": "WARNING", "propagate": True},
+                "google": {"level": "WARNING", "propagate": True},
+                "google.genai": {"level": "WARNING", "propagate": True},
+                "google_genai": {"level": "WARNING", "propagate": True},
+            },
         }
     )
 
