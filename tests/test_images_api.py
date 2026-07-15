@@ -8,6 +8,7 @@ from app.api.dependencies import (
     get_faceshield_adapter,
     get_gemini_analyzer,
     get_image_gateway,
+    get_prompt_image_editor,
 )
 from app.core.config import Settings, get_settings
 from app.main import app
@@ -27,8 +28,10 @@ def _settings() -> Settings:
         storage_timeout_seconds=30,
         analysis_timeout_seconds=60,
         processing_timeout_seconds=600,
+        prompt_edit_timeout_seconds=600,
         gemini_api_key=None,
         gemini_model="gemini-2.5-flash",
+        gemini_image_model="gemini-3.1-flash-image",
         faceshield_repo_path=Path("/tmp/faceshield"),
         faceshield_command="bash execute.sh",
     )
@@ -106,6 +109,16 @@ class FakeFaceShield:
         return output.getvalue()
 
 
+class FakePromptEditor:
+    def __init__(self, result: bytes) -> None:
+        self.result = result
+        self.prompts: list[str] = []
+
+    async def edit(self, image_png: bytes, prompt: str) -> bytes:
+        self.prompts.append(prompt)
+        return self.result
+
+
 def _face_analysis() -> GeminiAnalysisResult:
     return GeminiAnalysisResult(
         detections=[
@@ -153,16 +166,37 @@ def _process_payload(source: bytes, settings: Settings) -> dict[str, object]:
     }
 
 
+def _edit_payload(source: bytes, settings: Settings) -> dict[str, object]:
+    image_hash = decode_image(source, "image/png", settings).sha256
+    return {
+        "source_object_key": "protected/v2/task/out-1.png",
+        "source_download_url": (
+            "https://bucket.example.com/protected/v2/task/out-1.png?X-Amz-Signature=secret"
+        ),
+        "result_object_key": "protected/v2/task/out-2.png",
+        "result_upload_url": (
+            "https://bucket.example.com/protected/v2/task/out-2.png?X-Amz-Signature=secret"
+        ),
+        "result_content_type": "image/png",
+        "source_image_sha256": image_hash,
+        "prompt": "배경을 따뜻한 색감으로 바꿔줘",
+        "remove_metadata": True,
+    }
+
+
 def _client(
     settings: Settings,
     gateway: FakeGateway,
     analyzer: FakeAnalyzer,
     faceshield: FakeFaceShield,
+    editor: FakePromptEditor | None = None,
 ) -> TestClient:
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_image_gateway] = lambda: gateway
     app.dependency_overrides[get_gemini_analyzer] = lambda: analyzer
     app.dependency_overrides[get_faceshield_adapter] = lambda: faceshield
+    if editor is not None:
+        app.dependency_overrides[get_prompt_image_editor] = lambda: editor
     return TestClient(app)
 
 
@@ -357,3 +391,113 @@ def test_invalid_source_url_uses_common_error_envelope() -> None:
     body = response.json()
     assert body["error"]["code"] == "INVALID_SOURCE_URL"
     assert body["error"]["request_id"].startswith("req_")
+
+
+def test_v2_process_returns_result_fingerprint() -> None:
+    settings = _settings()
+    source = _source_png()
+    gateway = FakeGateway(source)
+    analyzer = FakeAnalyzer(GeminiAnalysisResult())
+    faceshield = FakeFaceShield()
+
+    try:
+        with _client(settings, gateway, analyzer, faceshield) as client:
+            response = client.post(
+                "/api/v2/images/process",
+                json=_process_payload(source, settings),
+            )
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 200
+    assert len(response.json()["result_image_sha256"]) == 64
+    assert response.json()["metadata_removed"] is True
+
+
+def test_v2_process_requires_metadata_removal() -> None:
+    settings = _settings()
+    source = _source_png()
+    gateway = FakeGateway(source)
+    analyzer = FakeAnalyzer(GeminiAnalysisResult())
+    faceshield = FakeFaceShield()
+    payload = _process_payload(source, settings)
+    payload["remove_metadata"] = False
+
+    try:
+        with _client(settings, gateway, analyzer, faceshield) as client:
+            response = client.post("/api/v2/images/process", json=payload)
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_METADATA_POLICY"
+
+
+def test_v2_edit_reprocesses_and_uploads_generated_image() -> None:
+    settings = _settings()
+    source = _source_png()
+    gateway = FakeGateway(source)
+    analyzer = FakeAnalyzer(_face_analysis())
+    faceshield = FakeFaceShield()
+    editor = FakePromptEditor(source)
+
+    try:
+        with _client(settings, gateway, analyzer, faceshield, editor) as client:
+            response = client.post(
+                "/api/v2/images/edit",
+                json=_edit_payload(source, settings),
+            )
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt_edit"] == {"applied": True}
+    assert body["privacy_postprocessing"]["deepfake_protection_applied"] is True
+    assert len(body["result_image_sha256"]) == 64
+    assert editor.prompts == ["배경을 따뜻한 색감으로 바꿔줘"]
+    assert analyzer.call_count == 1
+    assert faceshield.call_count == 1
+    assert gateway.uploaded is not None
+
+
+def test_v2_edit_rejects_source_hash_mismatch_before_editing() -> None:
+    settings = _settings()
+    source = _source_png()
+    gateway = FakeGateway(source)
+    analyzer = FakeAnalyzer(GeminiAnalysisResult())
+    faceshield = FakeFaceShield()
+    editor = FakePromptEditor(source)
+    payload = _edit_payload(source, settings)
+    payload["source_image_sha256"] = "f" * 64
+
+    try:
+        with _client(settings, gateway, analyzer, faceshield, editor) as client:
+            response = client.post("/api/v2/images/edit", json=payload)
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "SOURCE_IMAGE_MISMATCH"
+    assert editor.prompts == []
+    assert gateway.uploaded is None
+
+
+def test_v2_edit_rejects_empty_prompt() -> None:
+    settings = _settings()
+    source = _source_png()
+    gateway = FakeGateway(source)
+    analyzer = FakeAnalyzer(GeminiAnalysisResult())
+    faceshield = FakeFaceShield()
+    editor = FakePromptEditor(source)
+    payload = _edit_payload(source, settings)
+    payload["prompt"] = "   "
+
+    try:
+        with _client(settings, gateway, analyzer, faceshield, editor) as client:
+            response = client.post("/api/v2/images/edit", json=payload)
+    finally:
+        _clear_overrides()
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_PROMPT"

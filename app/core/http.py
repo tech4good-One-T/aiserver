@@ -84,6 +84,14 @@ def install_http_error_handling(app: FastAPI) -> None:
                 "INVALID_SELECTED_REGIONS",
                 "선택한 블러 영역 형식이 올바르지 않습니다.",
             )
+        elif "prompt" in invalid_fields:
+            error = AppError(422, "INVALID_PROMPT", "이미지 편집 요청이 올바르지 않습니다.")
+        elif request.url.path.startswith("/api/v2/") and "remove_metadata" in invalid_fields:
+            error = AppError(
+                422,
+                "INVALID_METADATA_POLICY",
+                "v2 이미지 처리에서는 메타데이터 제거가 필수입니다.",
+            )
         else:
             error = AppError(422, "INVALID_REQUEST", "요청 형식이 올바르지 않습니다.")
         return error_response(request, error)

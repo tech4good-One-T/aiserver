@@ -35,8 +35,10 @@ class Settings:
     storage_timeout_seconds: int
     analysis_timeout_seconds: int
     processing_timeout_seconds: int
+    prompt_edit_timeout_seconds: int
     gemini_api_key: str | None
     gemini_model: str
+    gemini_image_model: str
     faceshield_repo_path: Path | None
     faceshield_command: str
 
@@ -53,8 +55,10 @@ class Settings:
             storage_timeout_seconds=_positive_int("STORAGE_TIMEOUT_SECONDS", 30),
             analysis_timeout_seconds=_positive_int("ANALYSIS_TIMEOUT_SECONDS", 60),
             processing_timeout_seconds=_positive_int("PROCESSING_TIMEOUT_SECONDS", 600),
+            prompt_edit_timeout_seconds=_positive_int("PROMPT_EDIT_TIMEOUT_SECONDS", 600),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip() or None,
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip(),
+            gemini_image_model=os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image").strip(),
             faceshield_repo_path=Path(repo_path).expanduser().resolve() if repo_path else None,
             faceshield_command=os.getenv(
                 "FACESHIELD_COMMAND",

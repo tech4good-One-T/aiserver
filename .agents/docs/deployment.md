@@ -11,7 +11,8 @@ Command로 EC2에 배포한다. EC2는 외부 SSH 포트를 열 필요가 없다
 
 ## 현재 Docker 배포의 범위
 
-현재 `Dockerfile`과 GHCR 이미지는 Python 3.12 FastAPI·Pillow·OpenCV·Gemini SDK만 포함한다.
+현재 `Dockerfile`과 GHCR 이미지는 Python 3.12 FastAPI·Pillow·OpenCV·Gemini SDK·LangChain을
+포함한다.
 FaceShield 저장소, Python 3.8 conda 환경, CUDA 의존성과 가중치는 포함하지 않고,
 `deploy/ec2-deploy.sh`도 호스트 저장소·conda를 마운트하거나 GPU를 컨테이너에 전달하지
 않는다.
@@ -104,8 +105,10 @@ MAX_IMAGE_DIMENSION=4096
 STORAGE_TIMEOUT_SECONDS=30
 ANALYSIS_TIMEOUT_SECONDS=60
 PROCESSING_TIMEOUT_SECONDS=600
+PROMPT_EDIT_TIMEOUT_SECONDS=600
 GEMINI_API_KEY=<NEW_GEMINI_API_KEY>
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 FACESHIELD_REPO_PATH=/opt/faceshield/iccv25_faceshield
 FACESHIELD_COMMAND=/opt/miniconda3/bin/conda run --no-capture-output -n faceshield bash execute.sh
 HF_HOME=/opt/aiserver1/model-cache/huggingface
