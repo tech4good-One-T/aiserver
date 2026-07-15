@@ -1,0 +1,13 @@
+.agents/
+.git/
+.github/
+.idea/
+.pytest_cache/
+.ruff_cache/
+.venv/
+tests/
+.coverage
+.DS_Store
+.env
+*.py[cod]
+__pycache__/
