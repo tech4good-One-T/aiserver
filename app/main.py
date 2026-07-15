@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.images import router as images_router
+from app.core.http import install_http_error_handling
 from app.core.logging import configure_logging
 
 configure_logging()
@@ -23,6 +25,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="aiserver", lifespan=lifespan)
+install_http_error_handling(app)
+app.include_router(images_router)
 
 
 @app.get("/health", tags=["system"])
