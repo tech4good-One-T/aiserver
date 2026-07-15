@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Annotated
 
 import cv2
@@ -16,6 +17,7 @@ from app.api.dependencies import (
     get_faceshield_adapter,
     get_gemini_analyzer,
     get_image_gateway,
+    get_prompt_image_editor,
 )
 from app.api.schemas import (
     AnalyzedImage,
@@ -25,8 +27,14 @@ from app.api.schemas import (
     DetectionType,
     ImageAnalyzeRequest,
     ImageAnalyzeResponse,
+    ImageEditRequest,
+    ImageEditResponse,
     ImageProcessRequest,
     ImageProcessResponse,
+    ImageV2ProcessRequest,
+    ImageV2ProcessResponse,
+    PrivacyPostprocessingResult,
+    PromptEditResult,
 )
 from app.core.errors import AppError
 from app.core.http import get_request_id
@@ -45,15 +53,31 @@ from app.services.gemini_analyzer import (
 from app.services.image_codec import DecodedImage, decode_image, encode_png
 from app.services.image_gateway import ImageGateway
 from app.services.image_processing import blur_regions
+from app.services.prompt_image_editor import (
+    GeminiPromptImageEditor,
+    PromptImageEditorError,
+    PromptImageEditorInvalidResponseError,
+    PromptImageEditorTimeoutError,
+    PromptImageEditorUnavailableError,
+    PromptNotAllowedError,
+)
 from app.services.risk_policy import build_analysis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/images", tags=["images"])
+v2_router = APIRouter(prefix="/api/v2/images", tags=["images-v2"])
 MAX_FACESHIELD_DELTA = 32.0
 
 GatewayDependency = Annotated[ImageGateway, Depends(get_image_gateway)]
 AnalyzerDependency = Annotated[GeminiAnalyzer, Depends(get_gemini_analyzer)]
 FaceShieldDependency = Annotated[FaceShieldAdapter, Depends(get_faceshield_adapter)]
+PromptEditorDependency = Annotated[GeminiPromptImageEditor, Depends(get_prompt_image_editor)]
+
+
+@dataclass(frozen=True, slots=True)
+class _ProcessedImage:
+    response: ImageProcessResponse
+    result_image_sha256: str
 
 
 async def _analyze_for_endpoint(
@@ -255,7 +279,7 @@ async def _process_image(
     gateway: ImageGateway,
     analyzer: GeminiAnalyzer,
     faceshield: FaceShieldAdapter,
-) -> ImageProcessResponse:
+) -> _ProcessedImage:
     downloaded = await gateway.download(payload.source_download_url, payload.source_object_key)
     decoded = decode_image(downloaded.data, downloaded.content_type, settings)
     if decoded.sha256 != payload.analysis_image_sha256:
@@ -313,6 +337,7 @@ async def _process_image(
             "이미지 처리에 실패했습니다.",
         ) from None
 
+    result_image_sha256 = decode_image(final_png, "image/png", settings).sha256
     await gateway.upload_png(payload.result_upload_url, payload.result_object_key, final_png)
     deepfake_result = (
         DeepfakeProtectionResult(attempted=True, applied=True, skip_reason=None)
@@ -332,15 +357,18 @@ async def _process_image(
         face_detected,
         payload.remove_metadata,
     )
-    return ImageProcessResponse(
-        request_id=get_request_id(request),
-        status="COMPLETED",
-        source_object_key=payload.source_object_key,
-        result_object_key=payload.result_object_key,
-        result_content_type="image/png",
-        masked_region_count=mask_result.region_count,
-        deepfake_protection=deepfake_result,
-        metadata_removed=payload.remove_metadata,
+    return _ProcessedImage(
+        response=ImageProcessResponse(
+            request_id=get_request_id(request),
+            status="COMPLETED",
+            source_object_key=payload.source_object_key,
+            result_object_key=payload.result_object_key,
+            result_content_type="image/png",
+            masked_region_count=mask_result.region_count,
+            deepfake_protection=deepfake_result,
+            metadata_removed=payload.remove_metadata,
+        ),
+        result_image_sha256=result_image_sha256,
     )
 
 
@@ -356,7 +384,7 @@ async def process_image(
     """Mask selected regions, apply mandatory face protection, and upload PNG output."""
     try:
         async with asyncio.timeout(settings.processing_timeout_seconds):
-            return await _process_image(
+            processed = await _process_image(
                 payload,
                 request,
                 settings,
@@ -364,5 +392,196 @@ async def process_image(
                 analyzer,
                 faceshield,
             )
+            return processed.response
     except TimeoutError:
         raise AppError(504, "PROCESSING_TIMEOUT", "이미지 처리 시간이 초과되었습니다.") from None
+
+
+@v2_router.post("/process", response_model=ImageV2ProcessResponse)
+async def process_image_v2(
+    payload: ImageV2ProcessRequest,
+    request: Request,
+    settings: SettingsDependency,
+    gateway: GatewayDependency,
+    analyzer: AnalyzerDependency,
+    faceshield: FaceShieldDependency,
+) -> ImageV2ProcessResponse:
+    """Run v1 privacy protection while returning a versionable output fingerprint."""
+    try:
+        async with asyncio.timeout(settings.processing_timeout_seconds):
+            processed = await _process_image(
+                payload,
+                request,
+                settings,
+                gateway,
+                analyzer,
+                faceshield,
+            )
+            return ImageV2ProcessResponse(
+                **processed.response.model_dump(),
+                result_image_sha256=processed.result_image_sha256,
+            )
+    except TimeoutError:
+        raise AppError(504, "PROCESSING_TIMEOUT", "이미지 처리 시간이 초과되었습니다.") from None
+
+
+async def _edit_with_provider(
+    editor: GeminiPromptImageEditor,
+    image_png: bytes,
+    prompt: str,
+) -> bytes:
+    try:
+        return await editor.edit(image_png, prompt)
+    except PromptNotAllowedError:
+        raise AppError(
+            422,
+            "PROMPT_NOT_ALLOWED",
+            "요청한 이미지 편집을 적용할 수 없습니다.",
+        ) from None
+    except PromptImageEditorTimeoutError:
+        raise AppError(504, "PROCESSING_TIMEOUT", "이미지 편집 시간이 초과되었습니다.") from None
+    except PromptImageEditorInvalidResponseError:
+        raise AppError(
+            502,
+            "IMAGE_EDIT_PROVIDER_ERROR",
+            "이미지 편집 모델이 유효한 결과를 반환하지 않았습니다.",
+        ) from None
+    except PromptImageEditorUnavailableError:
+        raise AppError(
+            503,
+            "IMAGE_EDIT_MODEL_UNAVAILABLE",
+            "이미지 편집 모델을 사용할 수 없습니다.",
+        ) from None
+    except PromptImageEditorError:
+        raise AppError(502, "IMAGE_EDIT_PROVIDER_ERROR", "이미지 편집에 실패했습니다.") from None
+
+
+async def _analyze_edited_image(
+    analyzer: GeminiAnalyzer,
+    decoded: DecodedImage,
+) -> GeminiAnalysisResult:
+    try:
+        return await analyzer.analyze(decoded.gemini_bytes, decoded.gemini_mime_type)
+    except GeminiAnalyzerTimeoutError:
+        raise AppError(
+            504,
+            "PROCESSING_TIMEOUT",
+            "개인정보 재분석 시간이 초과되었습니다.",
+        ) from None
+    except GeminiAnalyzerError:
+        raise AppError(
+            503,
+            "PRIVACY_POSTPROCESSING_FAILED",
+            "편집 결과의 개인정보 보호 처리에 실패했습니다.",
+        ) from None
+
+
+def _generated_content_type(data: bytes) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    raise AppError(
+        502,
+        "IMAGE_EDIT_PROVIDER_ERROR",
+        "이미지 편집 모델이 지원하지 않는 형식을 반환했습니다.",
+    )
+
+
+@v2_router.post("/edit", response_model=ImageEditResponse)
+async def edit_image_v2(
+    payload: ImageEditRequest,
+    request: Request,
+    settings: SettingsDependency,
+    gateway: GatewayDependency,
+    analyzer: AnalyzerDependency,
+    faceshield: FaceShieldDependency,
+    editor: PromptEditorDependency,
+) -> ImageEditResponse:
+    """Edit a protected image, then reapply mandatory privacy safeguards."""
+    try:
+        async with asyncio.timeout(settings.prompt_edit_timeout_seconds):
+            downloaded = await gateway.download(
+                payload.source_download_url,
+                payload.source_object_key,
+            )
+            source = decode_image(downloaded.data, downloaded.content_type, settings)
+            if source.sha256 != payload.source_image_sha256:
+                raise AppError(
+                    409,
+                    "SOURCE_IMAGE_MISMATCH",
+                    "기준 이미지와 저장된 결과 이미지가 일치하지 않습니다.",
+                )
+
+            edited_bytes = await _edit_with_provider(editor, source.normalized_png, payload.prompt)
+            edited = decode_image(edited_bytes, _generated_content_type(edited_bytes), settings)
+            raw_analysis = await _analyze_edited_image(analyzer, edited)
+
+            try:
+                _, detections = build_analysis(raw_analysis, edited)
+                mask_polygons = [
+                    detection.region.polygon
+                    for detection in detections
+                    if detection.mask_supported and detection.region is not None
+                ]
+                face_boxes = [
+                    detection.region.bbox
+                    for detection in detections
+                    if detection.type is DetectionType.FACE_EXPOSURE
+                    and detection.region is not None
+                ]
+                mask_result = blur_regions(edited.image, mask_polygons)
+                output_image = mask_result.image
+                if face_boxes:
+                    output_image = await _protect_faces(
+                        output_image,
+                        face_boxes,
+                        faceshield,
+                        settings,
+                    )
+                final_png = encode_png(output_image, exif=None)
+            except AppError as exc:
+                if exc.code == "PROCESSING_TIMEOUT":
+                    raise
+                raise AppError(
+                    503,
+                    "PRIVACY_POSTPROCESSING_FAILED",
+                    "편집 결과의 개인정보 보호 처리에 실패했습니다.",
+                ) from None
+            except (OSError, RuntimeError, TypeError, ValueError):
+                raise AppError(
+                    503,
+                    "PRIVACY_POSTPROCESSING_FAILED",
+                    "편집 결과의 개인정보 보호 처리에 실패했습니다.",
+                ) from None
+
+            result_hash = decode_image(final_png, "image/png", settings).sha256
+            await gateway.upload_png(
+                payload.result_upload_url,
+                payload.result_object_key,
+                final_png,
+            )
+
+            logger.info(
+                "Prompt image edit completed "
+                "(request_id=%s masked_region_count=%d deepfake_applied=%s)",
+                get_request_id(request),
+                mask_result.region_count,
+                bool(face_boxes),
+            )
+            return ImageEditResponse(
+                request_id=get_request_id(request),
+                status="COMPLETED",
+                source_object_key=payload.source_object_key,
+                result_object_key=payload.result_object_key,
+                result_content_type="image/png",
+                result_image_sha256=result_hash,
+                prompt_edit=PromptEditResult(applied=True),
+                privacy_postprocessing=PrivacyPostprocessingResult(
+                    masked_region_count=mask_result.region_count,
+                    deepfake_protection_applied=bool(face_boxes),
+                    metadata_removed=True,
+                ),
+            )
+    except TimeoutError:
+        raise AppError(504, "PROCESSING_TIMEOUT", "이미지 편집 시간이 초과되었습니다.") from None

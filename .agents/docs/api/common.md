@@ -117,3 +117,4 @@ Content-Type: application/json
 
 - [이미지 위험정보 분석 API](images-analyze.md)
 - [이미지 보호 처리 API](images-process.md)
+- [v2 이미지 후처리 및 프롬프트 편집 API](images-v2-process-edit.md)

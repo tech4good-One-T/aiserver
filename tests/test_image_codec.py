@@ -20,8 +20,10 @@ def _settings(**overrides: object) -> Settings:
         "storage_timeout_seconds": 30,
         "analysis_timeout_seconds": 60,
         "processing_timeout_seconds": 600,
+        "prompt_edit_timeout_seconds": 600,
         "gemini_api_key": None,
         "gemini_model": "gemini-2.5-flash",
+        "gemini_image_model": "gemini-3.1-flash-image",
         "faceshield_repo_path": Path("/tmp/faceshield"),
         "faceshield_command": "sh run.sh",
     }

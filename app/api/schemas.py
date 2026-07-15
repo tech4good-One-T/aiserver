@@ -19,6 +19,7 @@ from pydantic import (
 MAX_IMAGE_DIMENSION = 4096
 MAX_REGION_POINTS = 128
 MAX_SELECTED_REGIONS = 100
+MAX_PROMPT_LENGTH = 2000
 
 
 def _validate_https_url(value: str) -> str:
@@ -44,6 +45,10 @@ def _normalize_sha256(value: str) -> str:
 NonEmptyString = Annotated[
     StrictStr,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=4096),
+]
+PromptText = Annotated[
+    StrictStr,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_PROMPT_LENGTH),
 ]
 ObjectKey = Annotated[
     StrictStr,
@@ -181,6 +186,13 @@ class ErrorCode(StrEnum):
     DEEPFAKE_PROTECTION_FAILED = "DEEPFAKE_PROTECTION_FAILED"
     ANALYSIS_TIMEOUT = "ANALYSIS_TIMEOUT"
     PROCESSING_TIMEOUT = "PROCESSING_TIMEOUT"
+    SOURCE_IMAGE_MISMATCH = "SOURCE_IMAGE_MISMATCH"
+    INVALID_PROMPT = "INVALID_PROMPT"
+    INVALID_METADATA_POLICY = "INVALID_METADATA_POLICY"
+    PROMPT_NOT_ALLOWED = "PROMPT_NOT_ALLOWED"
+    IMAGE_EDIT_PROVIDER_ERROR = "IMAGE_EDIT_PROVIDER_ERROR"
+    IMAGE_EDIT_MODEL_UNAVAILABLE = "IMAGE_EDIT_MODEL_UNAVAILABLE"
+    PRIVACY_POSTPROCESSING_FAILED = "PRIVACY_POSTPROCESSING_FAILED"
 
 
 DETECTION_GROUPS: dict[DetectionType, RiskGroupCode] = {
@@ -481,6 +493,48 @@ class ImageProcessResponse(ApiModel):
     masked_region_count: NonNegativeCount
     deepfake_protection: DeepfakeProtectionResult
     metadata_removed: StrictBool
+
+
+class ImageV2ProcessRequest(ImageProcessRequest):
+    """v2 privacy processing always removes metadata."""
+
+    remove_metadata: Literal[True]
+
+
+class ImageV2ProcessResponse(ImageProcessResponse):
+    result_image_sha256: Sha256Hex
+
+
+class ImageEditRequest(ApiModel):
+    source_object_key: ObjectKey
+    source_download_url: HttpsUrl
+    result_object_key: ObjectKey
+    result_upload_url: HttpsUrl
+    result_content_type: Literal["image/png"]
+    source_image_sha256: Sha256Hex
+    prompt: PromptText
+    remove_metadata: Literal[True]
+
+
+class PromptEditResult(ApiModel):
+    applied: Literal[True]
+
+
+class PrivacyPostprocessingResult(ApiModel):
+    masked_region_count: NonNegativeCount
+    deepfake_protection_applied: StrictBool
+    metadata_removed: Literal[True]
+
+
+class ImageEditResponse(ApiModel):
+    request_id: RequestId
+    status: Literal["COMPLETED"]
+    source_object_key: ObjectKey
+    result_object_key: ObjectKey
+    result_content_type: Literal["image/png"]
+    result_image_sha256: Sha256Hex
+    prompt_edit: PromptEditResult
+    privacy_postprocessing: PrivacyPostprocessingResult
 
 
 class ApiError(ApiModel):
